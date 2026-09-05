@@ -153,13 +153,19 @@ def validate_subnet(
 def find_ubuntu_image(
     compute_client: oci.core.ComputeClient,
     compartment_id: str,
-    shape: str,
+    architecture: str,
 ) -> Optional[object]:
-    """Return the newest non-Minimal Ubuntu platform image compatible with shape."""
+    """
+    Discover a current standard Ubuntu platform image.
+
+    architecture:
+        "aarch64" for Arm/A1
+        "x86" for AMD/Intel/E2
+    """
+
     response = compute_client.list_images(
         compartment_id=compartment_id,
         operating_system="Ubuntu",
-        shape=shape,
         sort_by="TIMECREATED",
         sort_order="DESC",
         limit=50,
@@ -167,25 +173,66 @@ def find_ubuntu_image(
 
     images = list(response.data)
 
-    # For A1, standard (non-Minimal) Ubuntu is preferable because
-    # Oracle's platform image documentation specifically recommends
-    # the standard Ubuntu image for Arm-based shapes.
-    if shape == "VM.Standard.A1.Flex":
-        standard = [
-            image
-            for image in images
-            if "minimal" not in (image.display_name or "").lower()
-            and "ubuntu" in (image.display_name or "").lower()
-        ]
-        if standard:
-            return standard[0]
+    print(f"  OCI returned {len(images)} Ubuntu image entries.")
 
-    ubuntu = [
-        image
-        for image in images
-        if "ubuntu" in (image.display_name or "").lower()
-    ]
-    return ubuntu[0] if ubuntu else None
+    candidates = []
+
+    for image in images:
+        name = (image.display_name or "").lower()
+
+        # We only want usable platform images.
+        lifecycle = (getattr(image, "lifecycle_state", "") or "").upper()
+
+        if lifecycle and lifecycle != "AVAILABLE":
+            continue
+
+        # Avoid Minimal Ubuntu for A1 because OCI recommends
+        # standard Ubuntu for Arm-based shapes.
+        if "minimal" in name:
+            continue
+
+        if "ubuntu" not in name:
+            continue
+
+        if architecture == "aarch64":
+            # Arm images are explicitly marked aarch64.
+            if "aarch64" not in name:
+                continue
+
+        elif architecture == "x86":
+            # OCI image names without aarch64 are the x86 builds.
+            if "aarch64" in name:
+                continue
+
+        else:
+            raise ValueError(
+                f"Unsupported image architecture: {architecture}"
+            )
+
+        candidates.append(image)
+
+    if not candidates:
+        return None
+
+    # Prefer 24.04, then 22.04, then the newest remaining Ubuntu image.
+    def score(image):
+        name = (image.display_name or "").lower()
+
+        if "24.04" in name:
+            version_score = 2
+        elif "22.04" in name:
+            version_score = 1
+        else:
+            version_score = 0
+
+        return (
+            version_score,
+            getattr(image, "time_created", "") or "",
+        )
+
+    candidates.sort(key=score, reverse=True)
+
+    return candidates[0]
 
 
 
