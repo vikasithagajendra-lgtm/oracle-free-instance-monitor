@@ -1,0 +1,59 @@
+name: OCI Always Free Instance Monitor
+
+on:
+  # One long polling job every 6 hours. The Python process polls every 120s
+  # inside the job because GitHub's schedule trigger cannot run every 2 min.
+  schedule:
+    - cron: "0 */6 * * *"
+
+  # Lets you start the monitor manually from Actions.
+  workflow_dispatch:
+
+# The workflow itself only needs read access to the repository.
+permissions:
+  contents: read
+
+# Never run two provisioning loops against the same OCI target at once.
+concurrency:
+  group: oci-instance-monitor
+  cancel-in-progress: false
+
+jobs:
+  provision:
+    runs-on: ubuntu-latest
+
+    # Keep a margin under the current GitHub-hosted 6-hour job limit.
+    timeout-minutes: 350
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install OCI SDK
+        run: python -m pip install -r requirements.txt
+
+      - name: Run OCI provisioner
+        env:
+          PYTHONUNBUFFERED: "1"
+
+          OCI_USER_ID: ${{ secrets.OCI_USER_ID }}
+          OCI_PRIVATE_KEY: ${{ secrets.OCI_PRIVATE_KEY }}
+          OCI_FINGERPRINT: ${{ secrets.OCI_FINGERPRINT }}
+          OCI_TENANCY_ID: ${{ secrets.OCI_TENANCY_ID }}
+          OCI_REGION: ${{ secrets.OCI_REGION }}
+          OCI_SUBNET_ID: ${{ secrets.OCI_SUBNET_ID }}
+          OCI_PUBLIC_SSH_KEY: ${{ secrets.OCI_PUBLIC_SSH_KEY }}
+
+          # Keep the requested 2-minute gap between launch requests.
+          OCI_RETRY_INTERVAL_SECONDS: "120"
+
+          # 5h45m. The workflow timeout leaves another 5-minute margin.
+          OCI_RUN_SECONDS: "20700"
+
+        run: python Server/Script.py
