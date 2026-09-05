@@ -153,7 +153,7 @@ def validate_subnet(
 def find_ubuntu_image(
     compute_client: oci.core.ComputeClient,
     compartment_id: str,
-    architecture: str,
+    shape: str,
 ) -> Optional[object]:
     """
     Discover a current standard Ubuntu platform image.
@@ -398,33 +398,70 @@ def main() -> int:
         return 1
 
     # ------------------------------------------------------------
-    # Discover compatible images once per candidate shape.
-    # ------------------------------------------------------------
-    candidates = choose_candidates()
-    images_by_shape = {}
+# Discover compatible Ubuntu images.
+#
+# A1 = ARM/aarch64
+# E2.1.Micro = x86
+#
+# Discover each architecture only once.
+# ------------------------------------------------------------
+candidates = choose_candidates()
+images_by_shape = {}
 
-    print("\nIMAGE DISCOVERY")
-    print("-" * 60)
+print("\nIMAGE DISCOVERY")
+print("-" * 60)
 
-    for candidate in candidates:
-        if candidate.shape in images_by_shape:
-            continue
+# ------------------------------------------------------------
+# A1 / ARM image
+# ------------------------------------------------------------
+try:
+    a1_image = find_ubuntu_image(
+        compute_client,
+        tenancy_id,
+        "aarch64",
+    )
 
-        try:
-            image = find_ubuntu_image(compute_client, tenancy_id, candidate.shape)
-            if image:
-                images_by_shape[candidate.shape] = image
-                print(f"✅ {candidate.shape}")
-                print(f"   {image.display_name}")
-                print(f"   OCID: {image.id}")
-            else:
-                print(f"⚠️ No compatible Ubuntu image found for {candidate.shape}")
+    if a1_image:
+        images_by_shape["VM.Standard.A1.Flex"] = a1_image
 
-        except oci.exceptions.ServiceError as exc:
-            print_service_error(
-                f"❌ Image discovery failed for {candidate.shape}.", exc
-            )
-            return 1
+        print("✅ ARM/A1 Ubuntu image found:")
+        print(f"   Name : {a1_image.display_name}")
+        print(f"   OCID : {a1_image.id}")
+    else:
+        print("⚠️ No standard Ubuntu aarch64 image found for A1.")
+
+except oci.exceptions.ServiceError as exc:
+    print_service_error(
+        "❌ A1 Ubuntu image discovery failed.",
+        exc,
+    )
+    return 1
+
+# ------------------------------------------------------------
+# E2 Micro / x86 image
+# ------------------------------------------------------------
+try:
+    e2_image = find_ubuntu_image(
+        compute_client,
+        tenancy_id,
+        "x86",
+    )
+
+    if e2_image:
+        images_by_shape["VM.Standard.E2.1.Micro"] = e2_image
+
+        print("✅ x86/E2 Ubuntu image found:")
+        print(f"   Name : {e2_image.display_name}")
+        print(f"   OCID : {e2_image.id}")
+    else:
+        print("⚠️ No standard Ubuntu x86 image found for E2.")
+
+except oci.exceptions.ServiceError as exc:
+    print_service_error(
+        "❌ E2 Ubuntu image discovery failed.",
+        exc,
+    )
+    return 1
 
     # ------------------------------------------------------------
     # Main 120-second polling loop.
